@@ -11,11 +11,16 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Required by the action to maintain commit history
 
       - name: Run GitLab Activity Sync
-        uses: jaimevalero/gitlab-activity-sync@v1
+        uses: gowee/sync-contrib-calendar-action@v0.1-alpha # Active community action
         with:
-          gitlab_url: 'http://102.223.8.140:9000/' # GitLab URL
-          gitlab_token: ${{ secrets.GITLAB_TOKEN }}
-          github_token: ${{ secrets.GH_TOKEN }}
-          github_repo: '${{ github.repository }}'
+          source: 'gitlab'
+          # gitlab
+          gitlab_endpoint: 'http://102.223.8.140:9000' 
+          
+          username: 'Jumaa_Omary' 
+          # Access token secret from Step 4
+          access_token: ${{ secrets.GITLAB_TOKEN }} 
