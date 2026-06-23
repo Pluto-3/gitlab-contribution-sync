@@ -47,33 +47,45 @@ jobs:
           echo "Action types found:"
           echo "$ALL_EVENTS" | jq -r '.[].action_name' | sort | uniq -c | sort -rn
 
-          DATES=$(echo "$ALL_EVENTS" | jq -r '.[].created_at' | cut -d'T' -f1 | sort -u)
+          # Build date -> contribution count map:
+          # push events use commit_count; everything else counts as 1
+          DATE_COUNTS=$(echo "$ALL_EVENTS" | jq -r '.[] |
+            (.created_at[0:10]) + " " +
+            (if .action_name == "pushed to" then (.push_data.commit_count // 1) else 1 end | tostring)
+          ' | awk '{sum[$1]+=$2} END {for (d in sum) print d, sum[d]}' | sort)
 
-          if [ -z "$DATES" ]; then
+          if [ -z "$DATE_COUNTS" ]; then
             echo "No GitLab activity found."
             exit 0
           fi
 
-          echo "GitLab active dates: $(echo "$DATES" | tr '\n' ' ')"
+          echo "GitLab contributions per day:"
+          echo "$DATE_COUNTS"
 
           git config --local user.email "$GH_EMAIL"
           git config --local user.name "$GH_NAME"
 
-          # Dates already committed (any email) — skip to avoid duplicates
-          ALREADY=$(git log --format="%s" | grep "^Synced GitLab contribution for " | sed 's/Synced GitLab contribution for //' | sort -u)
-
           COMMITTED=0
           SKIPPED=0
-          for DATE in $DATES; do
-            if echo "$ALREADY" | grep -qx "$DATE"; then
-              echo "Skip $DATE (already in history)"
+          while IFS=' ' read -r DATE EXPECTED; do
+            # Count existing synced commits for this date with the correct email
+            EXISTING=$(git log --author="$GH_EMAIL" --format="%s" \
+              | grep -c "^Synced GitLab contribution for $DATE$" || true)
+            TO_ADD=$((EXPECTED - EXISTING))
+
+            if [ "$TO_ADD" -le 0 ]; then
+              echo "Skip $DATE (have $EXISTING/$EXPECTED)"
               SKIPPED=$((SKIPPED + 1))
               continue
             fi
-            GIT_AUTHOR_DATE="$DATE 12:00:00" GIT_COMMITTER_DATE="$DATE 12:00:00" \
-              git commit --allow-empty -m "Synced GitLab contribution for $DATE"
-            COMMITTED=$((COMMITTED + 1))
-          done
 
-          echo "Committed: $COMMITTED  Skipped: $SKIPPED"
+            echo "Commit $DATE: adding $TO_ADD (have $EXISTING, need $EXPECTED)"
+            for i in $(seq 1 $TO_ADD); do
+              GIT_AUTHOR_DATE="$DATE 12:00:00" GIT_COMMITTER_DATE="$DATE 12:00:00" \
+                git commit --allow-empty -m "Synced GitLab contribution for $DATE"
+            done
+            COMMITTED=$((COMMITTED + TO_ADD))
+          done <<< "$DATE_COUNTS"
+
+          echo "Total committed: $COMMITTED  Days skipped: $SKIPPED"
           git push origin main
