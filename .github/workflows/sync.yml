@@ -21,38 +21,59 @@ jobs:
           GITLAB_USER: 'Jumaa_Omary'
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Fetch GitHub user info (login + noreply email that always matches the account)
-          GH_USER=$(curl -s -H "Authorization: token $GH_TOKEN" https://api.github.com/user)
-          GH_NAME=$(echo "$GH_USER" | jq -r '.login')
-          GH_ID=$(echo "$GH_USER" | jq -r '.id')
-          # GitHub's noreply address is always accepted for contribution attribution
-          GH_EMAIL="${GH_ID}+${GH_NAME}@users.noreply.github.com"
+          GH_EMAIL="jumaa.gunda101@gmail.com"
+          GH_NAME="Pluto-3"
           echo "Using GitHub identity: $GH_NAME <$GH_EMAIL>"
 
-          # Fetch contribution events from GitLab API
-          EVENTS=$(curl -s --header "PRIVATE-TOKEN: $GITLAB_TOKEN" "$GITLAB_URL/api/v4/users/$GITLAB_USER/events?per_page=100")
+          # Paginate through ALL GitLab events (max 100 per page)
+          ALL_EVENTS="[]"
+          PAGE=1
+          while true; do
+            RESPONSE=$(curl -s --header "PRIVATE-TOKEN: $GITLAB_TOKEN" \
+              "$GITLAB_URL/api/v4/users/$GITLAB_USER/events?per_page=100&page=$PAGE")
 
-          if ! echo "$EVENTS" | jq empty 2>/dev/null; then
-            echo "Error: Could not connect to GitLab or invalid token."
-            exit 1
-          fi
+            if ! echo "$RESPONSE" | jq empty 2>/dev/null; then
+              echo "Error: GitLab API returned invalid JSON on page $PAGE"
+              exit 1
+            fi
 
-          DATES=$(echo "$EVENTS" | jq -r '.[] | select(.action_name == "pushed to" or .action_name == "created") | .created_at' | cut -d'T' -f1 | sort -u)
+            COUNT=$(echo "$RESPONSE" | jq 'length')
+            echo "Page $PAGE: $COUNT events"
+            ALL_EVENTS=$(echo "$ALL_EVENTS $RESPONSE" | jq -s 'add')
+
+            [ "$COUNT" -lt 100 ] && break
+            PAGE=$((PAGE + 1))
+          done
+
+          TOTAL=$(echo "$ALL_EVENTS" | jq 'length')
+          echo "Total events fetched: $TOTAL"
+
+          # Show all action types seen (for debugging)
+          echo "Action types found:"
+          echo "$ALL_EVENTS" | jq -r '.[].action_name' | sort | uniq -c | sort -rn
+
+          # Extract unique dates from ALL event types (no action filter)
+          DATES=$(echo "$ALL_EVENTS" | jq -r '.[].created_at' | cut -d'T' -f1 | sort -u)
 
           if [ -z "$DATES" ]; then
-            echo "No recent GitLab activity found to sync."
+            echo "No GitLab activity found."
             exit 0
           fi
+
+          echo "Active dates to sync:"
+          echo "$DATES"
 
           git config --local user.email "$GH_EMAIL"
           git config --local user.name "$GH_NAME"
 
           mkdir -p activity_logs
+          PUSHED=0
           for DATE in $DATES; do
             echo "Activity on $DATE" >> "activity_logs/$DATE.log"
             git add "activity_logs/$DATE.log"
             GIT_AUTHOR_DATE="$DATE 12:00:00" GIT_COMMITTER_DATE="$DATE 12:00:00" \
-              git commit -m "Synced GitLab contribution for $DATE"
+              git commit -m "Synced GitLab contribution for $DATE" && PUSHED=$((PUSHED + 1))
           done
 
+          echo "Committed $PUSHED dates"
           git push origin main
