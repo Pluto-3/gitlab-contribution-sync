@@ -21,11 +21,12 @@ jobs:
           GITLAB_USER: 'Jumaa_Omary'
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Resolve the authenticated GitHub user's primary verified email
-          GH_EMAIL=$(curl -s -H "Authorization: token $GH_TOKEN" https://api.github.com/user/emails \
-            | jq -r '.[] | select(.primary==true and .verified==true) | .email')
-          GH_NAME=$(curl -s -H "Authorization: token $GH_TOKEN" https://api.github.com/user \
-            | jq -r '.login')
+          # Fetch GitHub user info (login + noreply email that always matches the account)
+          GH_USER=$(curl -s -H "Authorization: token $GH_TOKEN" https://api.github.com/user)
+          GH_NAME=$(echo "$GH_USER" | jq -r '.login')
+          GH_ID=$(echo "$GH_USER" | jq -r '.id')
+          # GitHub's noreply address is always accepted for contribution attribution
+          GH_EMAIL="${GH_ID}+${GH_NAME}@users.noreply.github.com"
           echo "Using GitHub identity: $GH_NAME <$GH_EMAIL>"
 
           # Fetch contribution events from GitLab API
