@@ -1,0 +1,21 @@
+name: Sync GitLab Contributions to GitHub
+
+on:
+  schedule:
+    - cron: '0 23 * * *' # Runs every day at 11 PM UTC
+  workflow_dispatch: # Allows you to run it manually
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Run GitLab Activity Sync
+        uses: jaimevalero/gitlab-activity-sync@v1
+        with:
+          gitlab_url: 'http://102.223.8.140:9000/' # GitLab URL
+          gitlab_token: ${{ secrets.GITLAB_TOKEN }}
+          github_token: ${{ secrets.GH_TOKEN }}
+          github_repo: '${{ github.repository }}'
