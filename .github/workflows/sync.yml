@@ -2,7 +2,7 @@ name: Sync GitLab Contributions to GitHub
 
 on:
   schedule:
-    - cron: '0 23 * * *' # Runs every day at 11 PM UTC
+    - cron: '0 23 * * *' # Runs daily at 11 PM UTC
   workflow_dispatch: # Allows you to run it manually
 
 jobs:
@@ -12,15 +12,48 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Required by the action to maintain commit history
+          fetch-depth: 0
 
-      - name: Run GitLab Activity Sync
-        uses: gowee/sync-contrib-calendar-action@v0.1-alpha # Active community action
-        with:
-          source: 'gitlab'
-          # gitlab
-          gitlab_endpoint: 'http://102.223.8.140:9000' 
+      - name: Fetch GitLab Activity and Create Commits
+        env:
+          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+          # Change to your actual internal GitLab domain
+          GITLAB_URL: 'http://102.223.8.140:9000' 
+          # Change to your GitLab username
+          GITLAB_USER: 'Jumaa_Omary' 
+        run: |
+          # 1. Fetch contribution events from GitLab API
+          # This pulls up to 100 recent events from the target user
+          EVENTS=$(curl -s --header "PRIVATE-TOKEN: $GITLAB_TOKEN" "$GITLAB_URL/api/v4/users/$GITLAB_USER/events?per_page=100")
           
-          username: 'Jumaa_Omary' 
-          # Access token secret from Step 4
-          access_token: ${{ secrets.GITLAB_TOKEN }} 
+          # Check if the API response is valid JSON
+          if ! echo "$EVENTS" | jq empty 2>/dev/null; then
+            echo "Error: Could not connect to GitLab or invalid token."
+            exit 1
+          fi
+
+          # 2. Extract unique action dates (YYYY-MM-DD)
+          # Filters for pushed commits or created merge requests
+          DATES=$(echo "$EVENTS" | jq -r '.[] | select(.action_name == "pushed to" or .action_name == "created") | .created_at' | cut -d'T' -f1 | sort -u)
+
+          if [ -z "$DATES" ]; then
+            echo "No recent GitLab activity found to sync."
+            exit 0
+          fi
+
+          # 3. Configure Git dummy profile
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitLab Sync Bot"
+
+          # 4. Generate a blank commit for each unique active day
+          # This fools the contribution graph without adding real files
+          mkdir -p activity_logs
+          for DATE in $DATES; do
+            echo "Activity on $DATE" >> "activity_logs/$DATE.log"
+            git add "activity_logs/$DATE.log"
+            # Explicitly force the commit timestamp to match the work day
+            GIT_AUTHOR_DATE="$DATE 12:00:00" GIT_COMMITTER_DATE="$DATE 12:00:00" git commit -m "Synced GitLab contribution for $DATE"
+          done
+
+          # 5. Push updates back to GitHub
+          git push origin main
