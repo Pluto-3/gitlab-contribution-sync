@@ -42,8 +42,8 @@ jobs:
           fi
 
           # 3. Configure Git dummy profile
-          git config --local user.email "jumaa.gunda@gmail.com"
-          git config --local user.name "GitLab Sync Bot"
+          git config --local user.email "jumaa.gunda101@gmail.com"
+          git config --local user.name "Pluto-3"
 
           # 4. Generate a blank commit for each unique active day
           # This fools the contribution graph without adding real files
