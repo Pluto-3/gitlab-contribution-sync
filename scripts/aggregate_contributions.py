@@ -22,6 +22,7 @@ Prints "YYYY-MM-DD COUNT" lines to stdout, one per day with activity.
 import json
 import os
 import sys
+import time
 import urllib.request
 import urllib.error
 from collections import defaultdict
@@ -33,6 +34,7 @@ GITLAB_USER = os.environ["GITLAB_USER"]
 PER_EVENT_CAP = 50
 PER_DAY_CAP = 100
 HTTP_TIMEOUT = 15
+MAX_RETRIES = 3
 
 
 def api_get(path, params=None):
@@ -41,8 +43,19 @@ def api_get(path, params=None):
         query = "&".join(f"{k}={v}" for k, v in params.items() if v is not None)
         url = f"{url}?{query}"
     req = urllib.request.Request(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN})
-    with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as resp:
-        return json.loads(resp.read().decode())
+
+    last_err = None
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as resp:
+                return json.loads(resp.read().decode())
+        except Exception as e:
+            last_err = e
+            if attempt < MAX_RETRIES:
+                print(f"Retrying ({attempt}/{MAX_RETRIES}) after error on {path}: {e}",
+                      file=sys.stderr)
+                time.sleep(2 * attempt)
+    raise last_err
 
 
 def get_own_emails():
