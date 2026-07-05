@@ -14,46 +14,22 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Fetch GitLab Activity and Create Commits
+      - name: Compute real per-day contribution counts
         env:
           GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
           GITLAB_URL: 'http://102.223.8.140:9000'
           GITLAB_USER: 'Jumaa_Omary'
+        run: python3 scripts/aggregate_contributions.py > /tmp/date_counts.txt
+
+      - name: Create commits from computed counts
         run: |
           GH_EMAIL="jumaa.gunda101@gmail.com"
           GH_NAME="Pluto-3"
+          # Hard ceiling regardless of what the aggregator computed: no single
+          # day should ever again turn into tens of thousands of commits.
+          MAX_ADD_PER_DAY=100
 
-          # Paginate through ALL GitLab events
-          ALL_EVENTS="[]"
-          PAGE=1
-          while true; do
-            RESPONSE=$(curl -s --header "PRIVATE-TOKEN: $GITLAB_TOKEN" \
-              "$GITLAB_URL/api/v4/users/$GITLAB_USER/events?per_page=100&page=$PAGE")
-
-            if ! echo "$RESPONSE" | jq empty 2>/dev/null; then
-              echo "Error: GitLab API returned invalid JSON on page $PAGE"
-              exit 1
-            fi
-
-            COUNT=$(echo "$RESPONSE" | jq 'length')
-            echo "Page $PAGE: $COUNT events"
-            ALL_EVENTS=$(echo "$ALL_EVENTS $RESPONSE" | jq -s 'add')
-
-            [ "$COUNT" -lt 100 ] && break
-            PAGE=$((PAGE + 1))
-          done
-
-          echo "Total events fetched: $(echo "$ALL_EVENTS" | jq 'length')"
-          echo "Action types found:"
-          echo "$ALL_EVENTS" | jq -r '.[].action_name' | sort | uniq -c | sort -rn
-
-          # Build date -> contribution count map:
-          # push events use commit_count; everything else counts as 1
-          DATE_COUNTS=$(echo "$ALL_EVENTS" | jq -r '.[] |
-            (.created_at[0:10]) + " " +
-            (if .action_name == "pushed to" then (.push_data.commit_count // 1) else 1 end | tostring)
-          ' | awk '{sum[$1]+=$2} END {for (d in sum) print d, sum[d]}' | sort)
-
+          DATE_COUNTS=$(cat /tmp/date_counts.txt)
           if [ -z "$DATE_COUNTS" ]; then
             echo "No GitLab activity found."
             exit 0
@@ -68,6 +44,7 @@ jobs:
           COMMITTED=0
           SKIPPED=0
           while IFS=' ' read -r DATE EXPECTED; do
+            [ -z "$DATE" ] && continue
             # Count existing synced commits for this date with the correct email
             EXISTING=$(git log --author="$GH_EMAIL" --format="%s" \
               | grep -c "^Synced GitLab contribution for $DATE$" || true)
@@ -77,6 +54,11 @@ jobs:
               echo "Skip $DATE (have $EXISTING/$EXPECTED)"
               SKIPPED=$((SKIPPED + 1))
               continue
+            fi
+
+            if [ "$TO_ADD" -gt "$MAX_ADD_PER_DAY" ]; then
+              echo "Warning: $DATE wants to add $TO_ADD, clamping to $MAX_ADD_PER_DAY"
+              TO_ADD=$MAX_ADD_PER_DAY
             fi
 
             echo "Commit $DATE: adding $TO_ADD (have $EXISTING, need $EXPECTED)"
