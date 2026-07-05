@@ -17,8 +17,9 @@ jobs:
       - name: Compute real per-day contribution counts
         env:
           GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
-          GITLAB_URL: 'http://102.223.8.140:9000'
-          GITLAB_USER: 'Jumaa_Omary'
+          GITLAB_URL: ${{ secrets.GITLAB_URL }}
+          GITLAB_USER: ${{ secrets.GITLAB_USER }}
+          GITLAB_AUTHOR_EMAILS: ${{ secrets.GITLAB_AUTHOR_EMAILS }}
         run: python3 scripts/aggregate_contributions.py > /tmp/date_counts.txt
 
       - name: Create commits from computed counts

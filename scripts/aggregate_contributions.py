@@ -72,9 +72,20 @@ def get_own_emails():
                 emails.add(entry["email"].lower())
     except Exception as e:
         print(f"Warning: could not fetch /user/emails: {e}", file=sys.stderr)
+
+    # GitLab's verified-emails API doesn't necessarily list every address you
+    # actually commit with (e.g. a personal email never added/verified on the
+    # account). GITLAB_AUTHOR_EMAILS is an explicit, known-good allowlist that
+    # covers that gap.
+    extra = os.environ.get("GITLAB_AUTHOR_EMAILS", "")
+    for e in extra.split(","):
+        e = e.strip().lower()
+        if e:
+            emails.add(e)
+
     if not emails:
-        print("Warning: no verified emails found for this token's user; "
-              "push-event commits cannot be author-filtered.", file=sys.stderr)
+        print("Warning: no known emails to filter by; push-event commits "
+              "cannot be author-filtered.", file=sys.stderr)
     return emails
 
 
@@ -186,12 +197,12 @@ def main():
             debug_other[date] += 1
 
     print("Per-day debug (raw commit_count from events / commits resolved via API / "
-          "matched to own email / other non-push events / distinct authors seen):",
+          "matched to own email(s) / other non-push events / distinct authors seen):",
           file=sys.stderr)
     for date in sorted(debug_raw.keys() | debug_other.keys()):
         print(f"  {date}: raw={debug_raw[date]} resolved={debug_resolved[date]} "
               f"matched={debug_matched[date]} other_events={debug_other[date]} "
-              f"authors={sorted(debug_authors[date])}", file=sys.stderr)
+              f"distinct_authors={len(debug_authors[date])}", file=sys.stderr)
 
     print("Contributions per day (after author-filtering and caps):", file=sys.stderr)
     for date in sorted(per_day):
