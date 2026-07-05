@@ -100,13 +100,14 @@ def fetch_all_events():
 
 
 def commits_for_push(event, own_emails):
-    """Returns the list of commit SHAs in this push actually authored by us."""
+    """Returns (matched_shas, all_authors_seen, raw_commit_count, resolved_count)."""
     project_id = event.get("project_id")
     push_data = event.get("push_data") or {}
     commit_to = push_data.get("commit_to")
     commit_from = push_data.get("commit_from")
+    raw_commit_count = push_data.get("commit_count", 0)
     if not project_id or not commit_to:
-        return []
+        return [], set(), raw_commit_count, 0
 
     try:
         if commit_from:
@@ -123,14 +124,16 @@ def commits_for_push(event, own_emails):
     except Exception as e:
         print(f"Warning: could not resolve commits for event {event.get('id')} "
               f"(project {project_id}): {e}", file=sys.stderr)
-        return []
+        return [], set(), raw_commit_count, 0
 
     if not isinstance(commits, list):
-        return []
+        return [], set(), raw_commit_count, 0
 
     shas = []
+    seen_authors = set()
     for c in commits:
         author_email = (c.get("author_email") or "").lower()
+        seen_authors.add(author_email)
         if author_email in own_emails:
             shas.append(c["id"])
 
@@ -141,11 +144,12 @@ def commits_for_push(event, own_emails):
               file=sys.stderr)
         shas = shas[:PER_EVENT_CAP]
 
-    return shas
+    return shas, seen_authors, raw_commit_count, len(commits)
 
 
 def main():
     own_emails = get_own_emails()
+    print(f"Own verified emails used for author-filtering: {sorted(own_emails)}", file=sys.stderr)
     events = fetch_all_events()
 
     action_counts = defaultdict(int)
@@ -157,18 +161,37 @@ def main():
 
     per_day = defaultdict(int)
     credited_shas = set()
+    debug_raw = defaultdict(int)
+    debug_resolved = defaultdict(int)
+    debug_matched = defaultdict(int)
+    debug_authors = defaultdict(set)
+    debug_other = defaultdict(int)
 
     for ev in events:
         date = ev["created_at"][:10]
         action = ev.get("action_name")
 
         if action in ("pushed to", "pushed new"):
-            for sha in commits_for_push(ev, own_emails):
+            shas, authors_seen, raw_count, resolved_count = commits_for_push(ev, own_emails)
+            debug_raw[date] += raw_count
+            debug_resolved[date] += resolved_count
+            debug_authors[date] |= authors_seen
+            for sha in shas:
                 if sha not in credited_shas:
                     credited_shas.add(sha)
                     per_day[date] += 1
+                    debug_matched[date] += 1
         else:
             per_day[date] += 1
+            debug_other[date] += 1
+
+    print("Per-day debug (raw commit_count from events / commits resolved via API / "
+          "matched to own email / other non-push events / distinct authors seen):",
+          file=sys.stderr)
+    for date in sorted(debug_raw.keys() | debug_other.keys()):
+        print(f"  {date}: raw={debug_raw[date]} resolved={debug_resolved[date]} "
+              f"matched={debug_matched[date]} other_events={debug_other[date]} "
+              f"authors={sorted(debug_authors[date])}", file=sys.stderr)
 
     print("Contributions per day (after author-filtering and caps):", file=sys.stderr)
     for date in sorted(per_day):
